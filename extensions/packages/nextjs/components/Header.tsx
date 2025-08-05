@@ -5,11 +5,14 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SwitchTheme } from "./SwitchTheme";
-import { Bars3Icon, BugAntIcon } from "@heroicons/react/24/outline";
+import {
+  BanknotesIcon,
+  Bars3Icon,
+  BugAntIcon,
+} from "@heroicons/react/24/outline";
 import { RainbowKitCustomConnectButton } from "~~/components/scaffold-eth";
 import { useOutsideClick, useTargetNetwork } from "~~/hooks/scaffold-eth";
 import { arbitrumNitro } from "~~/utils/scaffold-stylus/chain";
-import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 
 type HeaderMenuLink = {
   label: string;
@@ -30,7 +33,7 @@ export const menuLinks: HeaderMenuLink[] = [
   {
     label: "ERC-20",
     href: "/erc-20",
-    icon: <MagnifyingGlassIcon className="h-4 w-4" />,
+    icon: <BanknotesIcon className="h-4 w-4" />,
   },
 ];
 
