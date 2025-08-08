@@ -80,14 +80,8 @@ const ERC20Page: NextPage = () => {
             </p>
 
             <p>
-              The ERC-20 token contract is implemented using the{" "}
-              <a
-                href="#"
-                className="text-blue-500 hover:text-blue-600 underline"
-              >
-                ERC-20 token implementation
-              </a>{" "}
-              from OpenZeppelin.
+              The ERC-20 token contract is implemented using the ERC-20 token
+              implementation from OpenZeppelin.
             </p>
           </div>
         </div>
