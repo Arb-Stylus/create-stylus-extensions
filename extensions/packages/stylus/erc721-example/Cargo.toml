@@ -1,0 +1,37 @@
+[package]
+name = "erc721-example"
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/OffchainLabs/stylus-hello-world"
+publish = false
+
+[dependencies]
+openzeppelin-stylus = "=0.2.0"
+alloy-primitives = "=0.8.20"
+stylus-sdk = "=0.9.0"
+
+[dev-dependencies]
+alloy = { version = "1.0.23", features = ["full"] }
+eyre = "0.6.8"
+tokio = { version = "1.12.0", features = ["full"] }
+
+[features]
+default = ["mini-alloc"]
+e2e = []
+export-abi = ["openzeppelin-stylus/export-abi"]
+mini-alloc = ["stylus-sdk/mini-alloc"]
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[[bin]]
+name = "erc721_example_bin"
+path = "src/main.rs"
+
+[profile.release]
+codegen-units = 1
+strip = true
+lto = true
+panic = "abort"
+opt-level = 3
