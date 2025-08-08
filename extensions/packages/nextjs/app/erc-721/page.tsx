@@ -81,34 +81,15 @@ const ERC721Page: NextPage = () => {
             </p>
 
             <p>
-              The ERC-721 token contract is implemented using the{" "}
-              <a
-                href="#"
-                className="text-blue-500 hover:text-blue-600 underline"
-              >
-                ERC-721 token implementation
-              </a>{" "}
-              from OpenZeppelin.
+              The ERC-721 token contract is implemented using the ERC-721 token
+              implementation from OpenZeppelin.
             </p>
 
             <p>
-              The ERC-721 token implementation uses the{" "}
-              <a
-                href="#"
-                className="text-blue-500 hover:text-blue-600 underline"
-              >
-                ERC-721 Enumerable extension
-              </a>{" "}
-              from OpenZeppelin to list all tokens from the collection and all
-              the tokens owned by an address. You can remove this if you plan to
-              use an indexer, like a Subgraph or Ponder (
-              <a
-                href="#"
-                className="text-blue-500 hover:text-blue-600 underline"
-              >
-                extensions available
-              </a>
-              ).
+              The ERC-721 token implementation uses the ERC-721 Enumerable
+              extension from OpenZeppelin to list all tokens from the collection
+              and all the tokens owned by an address. You can remove this if you
+              plan to use an indexer, like a Subgraph or Ponder.
             </p>
           </div>
         </div>
