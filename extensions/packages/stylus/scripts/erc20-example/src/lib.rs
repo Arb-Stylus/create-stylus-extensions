@@ -6,10 +6,7 @@ use alloc::vec::Vec;
 use openzeppelin_stylus::{
     token::erc20::{
         self,
-        extensions::{
-            capped, Capped, Erc20Metadata, ICapped, IErc20Burnable,
-            IErc20Metadata,
-        },
+        extensions::{capped, Capped, Erc20Metadata, ICapped, IErc20Burnable, IErc20Metadata},
         Erc20, IErc20,
     },
     utils::{introspection::erc165::IErc165, pausable, IPausable, Pausable},
@@ -47,14 +44,10 @@ impl From<capped::Error> for Error {
 impl From<erc20::Error> for Error {
     fn from(value: erc20::Error) -> Self {
         match value {
-            erc20::Error::InsufficientBalance(e) => {
-                Error::InsufficientBalance(e)
-            }
+            erc20::Error::InsufficientBalance(e) => Error::InsufficientBalance(e),
             erc20::Error::InvalidSender(e) => Error::InvalidSender(e),
             erc20::Error::InvalidReceiver(e) => Error::InvalidReceiver(e),
-            erc20::Error::InsufficientAllowance(e) => {
-                Error::InsufficientAllowance(e)
-            }
+            erc20::Error::InsufficientAllowance(e) => Error::InsufficientAllowance(e),
             erc20::Error::InvalidSpender(e) => Error::InvalidSpender(e),
             erc20::Error::InvalidApprover(e) => Error::InvalidApprover(e),
         }
@@ -80,15 +73,9 @@ struct Erc20Example {
 }
 
 #[public]
-#[implements(IErc20<Error = Error>, IErc20Burnable<Error = Error>, IErc20Metadata, ICapped, IPausable, IErc165)]
 impl Erc20Example {
     #[constructor]
-    pub fn constructor(
-        &mut self,
-        name: String,
-        symbol: String,
-        cap: U256,
-    ) -> Result<(), Error> {
+    pub fn constructor(&mut self, name: String, symbol: String, cap: U256) -> Result<(), Error> {
         self.metadata.constructor(name, symbol);
         self.capped.constructor(cap)?;
         Ok(())
@@ -99,7 +86,7 @@ impl Erc20Example {
     // Make sure to handle `Capped` properly. You should not call
     // [`Erc20::_update`] to mint tokens -- it will the break `Capped`
     // mechanism.
-    fn mint(&mut self, account: Address, value: U256) -> Result<(), Error> {
+    pub fn mint(&mut self, account: Address, value: U256) -> Result<(), Error> {
         self.pausable.when_not_paused()?;
         let max_supply = self.capped.cap();
 
@@ -111,12 +98,10 @@ impl Erc20Example {
             .expect("new supply should not exceed `U256::MAX`");
 
         if supply > max_supply {
-            return Err(capped::Error::ExceededCap(
-                capped::ERC20ExceededCap {
-                    increased_supply: supply,
-                    cap: max_supply,
-                },
-            ))?;
+            return Err(capped::Error::ExceededCap(capped::ERC20ExceededCap {
+                increased_supply: supply,
+                cap: max_supply,
+            }))?;
         }
 
         self.erc20._mint(account, value)?;
@@ -127,115 +112,83 @@ impl Erc20Example {
     /// **production**, ensure strict access control to prevent unauthorized
     /// pausing or unpausing, which can disrupt contract functionality. Remove
     /// or secure these functions before deployment.
-    fn pause(&mut self) -> Result<(), Error> {
+    pub fn pause(&mut self) -> Result<(), Error> {
         Ok(self.pausable.pause()?)
     }
 
-    fn unpause(&mut self) -> Result<(), Error> {
+    pub fn unpause(&mut self) -> Result<(), Error> {
         Ok(self.pausable.unpause()?)
     }
-}
 
-#[public]
-impl IErc20 for Erc20Example {
-    type Error = Error;
-
-    fn total_supply(&self) -> U256 {
+    // IErc20 trait implementations
+    pub fn total_supply(&self) -> U256 {
         self.erc20.total_supply()
     }
 
-    fn balance_of(&self, account: Address) -> U256 {
+    pub fn balance_of(&self, account: Address) -> U256 {
         self.erc20.balance_of(account)
     }
 
-    fn transfer(
-        &mut self,
-        to: Address,
-        value: U256,
-    ) -> Result<bool, Self::Error> {
+    pub fn transfer(&mut self, to: Address, value: U256) -> Result<bool, Error> {
         self.pausable.when_not_paused()?;
         Ok(self.erc20.transfer(to, value)?)
     }
 
-    fn allowance(&self, owner: Address, spender: Address) -> U256 {
+    pub fn allowance(&self, owner: Address, spender: Address) -> U256 {
         self.erc20.allowance(owner, spender)
     }
 
-    fn approve(
-        &mut self,
-        spender: Address,
-        value: U256,
-    ) -> Result<bool, Self::Error> {
+    pub fn approve(&mut self, spender: Address, value: U256) -> Result<bool, Error> {
         Ok(self.erc20.approve(spender, value)?)
     }
 
-    fn transfer_from(
+    pub fn transfer_from(
         &mut self,
         from: Address,
         to: Address,
         value: U256,
-    ) -> Result<bool, Self::Error> {
+    ) -> Result<bool, Error> {
         self.pausable.when_not_paused()?;
         Ok(self.erc20.transfer_from(from, to, value)?)
     }
-}
 
-#[public]
-impl IErc20Metadata for Erc20Example {
-    fn name(&self) -> String {
-        self.metadata.name()
-    }
-
-    fn symbol(&self) -> String {
-        self.metadata.symbol()
-    }
-
-    // Overrides the default [`IErc20Metadata::decimals`], and sets it to `10`.
-    //
-    // If you don't provide this method in the `entrypoint` contract, it will
-    // default to `18`.
-    fn decimals(&self) -> U8 {
-        DECIMALS
-    }
-}
-
-#[public]
-impl IErc165 for Erc20Example {
-    fn supports_interface(&self, interface_id: B32) -> bool {
-        Erc20::supports_interface(&self.erc20, interface_id)
-            || Erc20Metadata::supports_interface(&self.metadata, interface_id)
-    }
-}
-
-#[public]
-impl IErc20Burnable for Erc20Example {
-    type Error = Error;
-
-    fn burn(&mut self, value: U256) -> Result<(), Self::Error> {
+    // IErc20Burnable trait implementations
+    pub fn burn(&mut self, value: U256) -> Result<(), Error> {
         self.pausable.when_not_paused()?;
         Ok(self.erc20.burn(value)?)
     }
 
-    fn burn_from(
-        &mut self,
-        account: Address,
-        value: U256,
-    ) -> Result<(), Self::Error> {
+    pub fn burn_from(&mut self, account: Address, value: U256) -> Result<(), Error> {
         self.pausable.when_not_paused()?;
         Ok(self.erc20.burn_from(account, value)?)
     }
-}
 
-#[public]
-impl ICapped for Erc20Example {
-    fn cap(&self) -> U256 {
+    // IErc20Metadata trait implementations
+    pub fn name(&self) -> String {
+        self.metadata.name()
+    }
+
+    pub fn symbol(&self) -> String {
+        self.metadata.symbol()
+    }
+
+    pub fn decimals(&self) -> U8 {
+        DECIMALS
+    }
+
+    // ICapped trait implementations
+    pub fn cap(&self) -> U256 {
         self.capped.cap()
     }
-}
 
-#[public]
-impl IPausable for Erc20Example {
-    fn paused(&self) -> bool {
+    // IPausable trait implementations
+    pub fn paused(&self) -> bool {
         self.pausable.paused()
+    }
+
+    // IErc165 trait implementations
+    pub fn supports_interface(&self, interface_id: B32) -> bool {
+        Erc20::supports_interface(&self.erc20, interface_id)
+            || Erc20Metadata::supports_interface(&self.metadata, interface_id)
     }
 }
