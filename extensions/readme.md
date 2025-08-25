@@ -104,6 +104,25 @@ Visit your app at: `http://localhost:3000`. You can interact with your smart con
 yarn stylus:test
 ```
 
+### 7. Explore Chainlink VRF 2.5
+
+This Scaffold Stylus boilerplate includes a Chainlink VRF (Verifiable Random Function) 2.5 integration example that demonstrates how to generate cryptographically secure random numbers in your smart contracts using the direct funding method. This feature is available on **Arbitrum Sepolia** and **Arbitrum One** networks.
+
+The example implements VRF 2.5 functionality and includes:
+
+- Direct funding implementation for VRF requests (no subscription required)
+- External contract configuration for both Arbitrum Sepolia and One
+- A dedicated page at `/vrf` to request random numbers and view results
+
+To use the Chainlink VRF integration:
+
+1. Make sure you're connected to either Arbitrum Sepolia or Arbitrum One.
+2. Navigate to the `/vrf` page in the app for detailed implementation and usage information
+3. Request random numbers using direct funding and view the cryptographically secure results
+4. Follow the examples to integrate VRF into your own contracts
+
+**Note:** Chainlink VRF 2.5 with direct funding requires paying for each request with LINK?Native tokens. The service is only available on Arbitrum Sepolia and Arbitrum One networks. The local development network does not support this feature. You would have to fork these networks to use VRF locally, which are currently not supported.
+
 ## Development Workflow
 
 - Edit your smart contract `lib.rs` in `packages/stylus/your-contract/src`
@@ -194,7 +213,7 @@ yarn info:networks
 
 This will show you all supported networks and their corresponding RPC endpoints.
 
-### Deploy to Other Network (Non-Orbit Chains)
+### Deploy to Other Network
 
 Once configured, deploy to your target network:
 
@@ -207,14 +226,6 @@ yarn deploy --network <network>
 - The values in `.env.example` provide a template for required environment variables
 - **Always keep your private key secure and never commit it to version control**
 - Consider using environment variable management tools for production deployments
-
-### Deploy to Orbit Chains
-
-Before deploying, you would have to ensure that your `deployStylusContract` function on your `deploy.ts` function has the `isOrbit` value set to `true` (example provided in `deploy.ts`).
-
-Your contract must have an `initialize()` function as the replacement for the constructor, since not all orbit chains support the constructor feature. Please leave it blank if you don't have any constructor.
-
-> Make sure you handle initialization properly in your contract, meaning it should only be called once and functions should not run if contract is not initialized.
 
 ## Verify your contract (Highly Experimental)
 
@@ -233,10 +244,9 @@ Check full documentation for more [details](https://docs.arbitrum.io/stylus/how-
 
 ### Stylus Local Verification (Under Development)
 
-Make sure your contract does not include constructor or constructor does not contain any args
+Make sure your constructor does not contain any args
 
 ```rs
-[#constructor]
 pub fn constructor(&mut self)
 ```
 
@@ -277,23 +287,6 @@ For public verification on Arbiscan, follow these steps:
 Check official document for detail instructions: <https://docs.arbitrum.io/stylus/how-tos/verifying-contracts-arbiscan>
 
 > **Note**: Arbiscan verification for Stylus contracts is still evolving. If you encounter issues, consider using the local verification method or check Arbiscan's latest documentation for Stylus-specific instructions.
-
-**Tip**: If you still want to initialize your contract, then add your own `initialize()` function and initialize it yourself
-Sample :
-
-```
-pub fn initialize(&mut self, initial_number: U256) {
-   if !self.is_initialized.get() {
-      self.number.set(initial_number);
-      self.is_initialized.set(true);
-   } else {
-      panic!("Counter already initialized");
-   }
-}
-```
-
-Then use `cast --rpc-url <your-rpc-url> --private-key <your-private-key> [deployed-contract-address] "initialize(uint256)" <initial_number>`
-Or check [`deploy_contract.ts` lines 95-118](packages/stylus/scripts/deploy_contract.ts#L95-L118) and add it to your `deploy.ts` script.
 
 </details>
 
