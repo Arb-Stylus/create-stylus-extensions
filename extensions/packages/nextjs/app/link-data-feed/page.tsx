@@ -390,7 +390,13 @@ const PriceFeedPage: NextPage = () => {
         </div>
 
         {/* Debug Info - remove this in production */}
-        <div className="mt-8 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg text-sm">
+        <div className="mt-8 p-4 rounded-lg border-2 text-sm"
+          style={{
+            backgroundColor: isDarkMode ? "#1a1a1a" : "#f8f9fa",
+            borderColor: isDarkMode ? "#333" : "#e9ecef",
+            color: isDarkMode ? "#fff" : "#000",
+          }}
+        >
           <h3 className="font-semibold mb-2">Debug Information:</h3>
           <p>Price History Length: {priceHistory.length}</p>
           <p>Current Price: ${currentPrice.toFixed(6)}</p>
