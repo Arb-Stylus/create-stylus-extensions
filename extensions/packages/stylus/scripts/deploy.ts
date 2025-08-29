@@ -1,5 +1,9 @@
 import deployStylusContract from "./deploy_contract";
-import { getDeploymentConfig, printDeployedAddresses } from "./utils/";
+import {
+  getDeploymentConfig,
+  getRpcUrlFromChain,
+  printDeployedAddresses,
+} from "./utils/";
 import { DeployOptions } from "./utils/type";
 import { config as dotenvConfig } from "dotenv";
 import * as path from "path";
@@ -16,7 +20,7 @@ if (fs.existsSync(envPath)) {
 export default async function deployScript(deployOptions: DeployOptions) {
   const config = getDeploymentConfig(deployOptions);
 
-  console.log(`📡 Using endpoint: ${config.chain?.rpcUrl}`);
+  console.log(`📡 Using endpoint: ${getRpcUrlFromChain(config.chain)}`);
   if (config.chain) {
     console.log(`🌐 Network: ${config.chain?.name}`);
     console.log(`🔗 Chain ID: ${config.chain?.id}`);
@@ -48,5 +52,5 @@ export default async function deployScript(deployOptions: DeployOptions) {
 
   // Print the deployed addresses
   console.log("\n\n");
-  printDeployedAddresses(config.deploymentDir, config.chain?.id);
+  printDeployedAddresses(config.deploymentDir, config.chain?.id.toString());
 }
