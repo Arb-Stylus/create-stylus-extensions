@@ -1,10 +1,10 @@
 //!
-//! VRFConsumer in Stylus Rust
+//! DirectFundingConsumer in Stylus Rust
 //!
-//! A smart contract that allows changing a state variable of the contract and tracking the changes
-//! It also allows the owner to withdraw the Ether in the contract
+//! A VRF consumer contract that requests randomness from Chainlink VRF V2+ wrapper
+//! using native tokens (ETH) for payment.
 //!
-//! This is the Stylus Rust equivalent of the Solidity VRFConsumer.
+//! This is the Stylus Rust equivalent of the Solidity DirectFundingConsumer.
 //!
 
 // Allow `cargo stylus export-abi` to generate a main function.
@@ -18,64 +18,309 @@ use alloc::vec::Vec;
 
 /// Import items from the SDK. The prelude contains common traits and macros.
 use stylus_sdk::{
-    alloy_primitives::{Address, U256},
+    alloy_primitives::{Address, Bytes, U16, U256, U32},
+    alloy_sol_types::sol,
     prelude::*,
+    stylus_core::calls::context::Call,
+    stylus_core::log,
 };
 
+// Import deprecated Call for sol_interface! compatibility
+#[allow(deprecated)]
+use stylus_sdk::call::Call as OldCall;
+
+/// Import OpenZeppelin Ownable functionality
+use openzeppelin_stylus::access::ownable::{self, IOwnable, Ownable};
+
 // Define persistent storage using the Solidity ABI.
-// `VRFConsumer` will be the entrypoint.
 sol_storage! {
     #[entrypoint]
-    pub struct VRFConsumer {
+    pub struct DirectFundingConsumer {
+        address i_vrf_v2_plus_wrapper;
+        mapping(uint256 => uint256) s_requests_paid; // store the amount paid for request random words
+        mapping(uint256 => uint256) s_requests_value; // store random word returned
+        mapping(uint256 => bool) s_requests_fulfilled; // store if request was fulfilled
+        uint256[] request_ids;
+        uint256 last_request_id;
+        uint32 callback_gas_limit;
+        uint16 request_confirmations;
+        uint32 num_words;
+        Ownable ownable;
 
     }
 }
 
+// Define the VRF V2+ Wrapper interface
 sol_interface! {
-    interface IDirectFundingConsumer {
-        function requestRandomWords(
-        bool enableNativePayment
-    ) external returns (uint256);
-        function getRequestStatus(
-        uint256 _requestId
-    )
-        external
-        view
-        returns (uint256 paid, bool fulfilled, uint256 randomWord);
-        function getLastRequestId() external view returns (uint256);
+    interface IVRFV2PlusWrapper {
+        function calculateRequestPriceNative(uint32 _callbackGasLimit, uint32 _numWords) external view returns (uint256);
+        function requestRandomWordsInNative(
+            uint32 _callbackGasLimit,
+            uint16 _requestConfirmations,
+            uint32 _numWords,
+            bytes calldata extraArgs
+        ) external payable returns (uint256 requestId);
     }
 }
 
-/// Declare that `VRFConsumer` is a contract with the following external methods.
+// Define events
+sol! {
+    event RequestSent(uint256 indexed requestId, uint32 numWords);
+    event RequestFulfilled(uint256 indexed requestId, uint256[] randomWords, uint256 payment);
+    event Received(address indexed sender, uint256 value);
+}
+
+// Define custom errors
+sol! {
+    #[derive(Debug)]
+    error OnlyVRFWrapperCanFulfill(address have, address want);
+}
+
+#[derive(SolidityError, Debug)]
+pub enum Error {
+    OnlyVRFWrapperCanFulfill(OnlyVRFWrapperCanFulfill),
+    UnauthorizedAccount(ownable::OwnableUnauthorizedAccount),
+    InvalidOwner(ownable::OwnableInvalidOwner),
+}
+
+impl From<ownable::Error> for Error {
+    fn from(value: ownable::Error) -> Self {
+        match value {
+            ownable::Error::UnauthorizedAccount(e) => Error::UnauthorizedAccount(e),
+            ownable::Error::InvalidOwner(e) => Error::InvalidOwner(e),
+        }
+    }
+}
+/// Declare that `DirectFundingConsumer` is a contract with the following external methods.
 #[public]
-impl VRFConsumer {
-    /// @param contract_address - The address of the external vrf consumer contract: https://github.com/gianalarcon/vrf-consumer/blob/main/packages/hardhat/contracts/DirectFundingConsumer.sol#L53
-    pub fn call_write_request_random_number(
+#[implements(IOwnable<Error = Error>)]
+impl DirectFundingConsumer {
+    /// Constructor - initializes the contract with VRF wrapper address
+    #[constructor]
+    pub fn constructor(
         &mut self,
-        contract_address: Address, // 0xeEA5eC3da1ED9b3479Cb2f0834f4FD918eBCfCC2
-    ) -> Result<U256, Vec<u8>> {
-        let external_contract = IDirectFundingConsumer::new(contract_address);
-        let request_id = external_contract.request_random_words(&mut *self, true)?;
+        vrf_v2_plus_wrapper: Address,
+        owner: Address,
+    ) -> Result<(), Error> {
+        self.ownable.constructor(owner)?;
+        self.i_vrf_v2_plus_wrapper.set(vrf_v2_plus_wrapper);
+        self.callback_gas_limit.set(U32::from(100000));
+        self.request_confirmations.set(U16::from(3));
+        self.num_words.set(U32::from(1));
+        Ok(())
+    }
+
+    /// Internal function to request randomness paying in native ETH token
+    fn request_randomness_pay_in_native(
+        &mut self,
+        callback_gas_limit: u32,
+        request_confirmations: u16,
+        num_words: u32,
+    ) -> Result<(U256, U256), Vec<u8>> {
+        let external_vrf_wrapper_address = self.i_vrf_v2_plus_wrapper.get();
+
+        let external_vrf_wrapper = IVRFV2PlusWrapper::new(external_vrf_wrapper_address);
+
+        // Calculate request price
+        let request_price = external_vrf_wrapper.calculate_request_price_native(
+            &mut *self,
+            callback_gas_limit,
+            num_words,
+        )?;
+
+        let extra_args = get_extra_args_for_native_payment();
+
+        // Create call context with value. This is to ensure that the consumer can pay for the request.
+        // Using OldCall here is necessary for compatibility with sol_interface! generated code
+        #[allow(deprecated)]
+        let config = OldCall::new().value(request_price);
+
+        // Request random words
+        let request_id = external_vrf_wrapper.request_random_words_in_native(
+            config,
+            callback_gas_limit,
+            request_confirmations,
+            num_words,
+            extra_args,
+        )?;
+
+        Ok((request_id, request_price))
+    }
+
+    /// Public function to request random words
+    pub fn request_random_words(&mut self) -> Result<U256, Vec<u8>> {
+        let callback_gas_limit = self.callback_gas_limit.get().try_into().unwrap_or(100000);
+        let request_confirmations = self.request_confirmations.get().try_into().unwrap_or(3);
+        let num_words = self.num_words.get().try_into().unwrap_or(1);
+
+        let (request_id, req_price) = self.request_randomness_pay_in_native(
+            callback_gas_limit,
+            request_confirmations,
+            num_words,
+        )?;
+
+        // Store request status in separate mappings
+        self.s_requests_fulfilled.insert(request_id, false);
+        self.s_requests_paid.insert(request_id, req_price);
+
+        // Add to request IDs array and update last request ID
+        self.request_ids.push(request_id);
+        self.last_request_id.set(request_id);
+
+        // Emit event
+        log(
+            self.vm(),
+            RequestSent {
+                requestId: request_id,
+                numWords: num_words,
+            },
+        );
+
         Ok(request_id)
     }
 
-    pub fn call_view_get_request_status(
-        &self,
-        contract_address: Address,
+    /// Internal function to fulfill random words
+    fn fulfill_random_words(
+        &mut self,
         request_id: U256,
-    ) -> Result<(U256, bool, U256), Vec<u8>> {
-        let external_contract = IDirectFundingConsumer::new(contract_address);
-        let (paid, fulfilled, random_word) =
-            external_contract.get_request_status(self, request_id)?;
+        random_words: Vec<U256>,
+    ) -> Result<(), Error> {
+        let paid_amount = self.s_requests_paid.get(request_id);
+
+        if paid_amount == U256::ZERO {
+            panic!("Request not found");
+        }
+
+        //request_status.fulfilled = true;
+        self.s_requests_fulfilled.insert(request_id, true);
+
+        if !random_words.is_empty() {
+            self.s_requests_value.insert(request_id, random_words[0]);
+        }
+
+        // Emit event
+        log(
+            self.vm(),
+            RequestFulfilled {
+                requestId: request_id,
+                randomWords: random_words,
+                payment: paid_amount,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// External function called by VRF wrapper to fulfill randomness
+    pub fn raw_fulfill_random_words(
+        &mut self,
+        request_id: U256,
+        random_words: Vec<U256>,
+    ) -> Result<(), Error> {
+        let vrf_wrapper_addr = self.i_vrf_v2_plus_wrapper.get();
+        let msg_sender = self.vm().msg_sender();
+        if msg_sender != vrf_wrapper_addr {
+            return Err(Error::OnlyVRFWrapperCanFulfill(OnlyVRFWrapperCanFulfill {
+                have: msg_sender,
+                want: vrf_wrapper_addr,
+            }));
+        }
+
+        self.fulfill_random_words(request_id, random_words)
+    }
+
+    /// Get the status of a randomness request
+    pub fn get_request_status(&self, request_id: U256) -> Result<(U256, bool, U256), Vec<u8>> {
+        let paid = self.s_requests_paid.get(request_id);
+
+        if paid == U256::ZERO {
+            panic!("Request not found");
+        }
+
+        let fulfilled = self.s_requests_fulfilled.get(request_id);
+        let random_word = self.s_requests_value.get(request_id);
+
         Ok((paid, fulfilled, random_word))
     }
 
-    pub fn call_view_get_last_request_id(
-        &self,
-        contract_address: Address,
-    ) -> Result<U256, Vec<u8>> {
-        let external_contract = IDirectFundingConsumer::new(contract_address);
-        let last_request_id = external_contract.get_last_request_id(self)?;
-        Ok(last_request_id)
+    /// Get the last request ID
+    pub fn get_last_request_id(&self) -> U256 {
+        self.last_request_id.get()
     }
+
+    /// Withdraw native tokens
+    pub fn withdraw_native(&mut self, amount: U256) -> Result<(), Vec<u8>> {
+        self.ownable.only_owner()?;
+
+        // Transfer the amount
+        self.vm()
+            .call(&Call::new().value(amount), self.ownable.owner(), &[])?;
+
+        Ok(())
+    }
+
+    pub fn owner(&self) -> Address {
+        self.ownable.owner()
+    }
+
+    // Getter functions for configuration
+    pub fn callback_gas_limit(&self) -> U32 {
+        self.callback_gas_limit.get()
+    }
+
+    pub fn request_confirmations(&self) -> U16 {
+        self.request_confirmations.get()
+    }
+
+    pub fn num_words(&self) -> U32 {
+        self.num_words.get()
+    }
+
+    pub fn i_vrf_v2_plus_wrapper(&self) -> Address {
+        self.i_vrf_v2_plus_wrapper.get()
+    }
+
+    /// Receive function equivalent - handles incoming ETH
+    #[receive]
+    #[payable]
+    pub fn receive(&mut self) -> Result<(), Vec<u8>> {
+        log(
+            self.vm(),
+            Received {
+                sender: self.vm().msg_sender(),
+                value: self.vm().msg_value(),
+            },
+        );
+        Ok(())
+    }
+}
+
+/// Implementation of the IOwnable interface
+#[public]
+impl IOwnable for DirectFundingConsumer {
+    type Error = Error;
+
+    fn owner(&self) -> Address {
+        self.ownable.owner()
+    }
+
+    fn transfer_ownership(&mut self, new_owner: Address) -> Result<(), Self::Error> {
+        Ok(self.ownable.transfer_ownership(new_owner)?)
+    }
+
+    fn renounce_ownership(&mut self) -> Result<(), Self::Error> {
+        Ok(self.ownable.renounce_ownership()?)
+    }
+}
+
+fn get_extra_args_for_native_payment() -> Bytes {
+    // Encode extra args according to VRFV2PlusClient._argsToBytes()
+    // Format: abi.encodeWithSelector(EXTRA_ARGS_V1_TAG, extraArgs)
+    // where EXTRA_ARGS_V1_TAG = bytes4(keccak256("VRF ExtraArgsV1")) = 0x92fd1338
+    let mut extra_args_vec = Vec::new();
+    extra_args_vec.extend_from_slice(&[0x92, 0xfd, 0x13, 0x38]); // EXTRA_ARGS_V1_TAG
+    extra_args_vec.extend_from_slice(&[0x00; 28]); // Padding for struct alignment
+    extra_args_vec.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]); // nativePayment: true
+    extra_args_vec.extend_from_slice(&[0x00; 28]); // Final padding
+    Bytes::from(extra_args_vec)
 }
