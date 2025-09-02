@@ -6,15 +6,17 @@ use alloc::vec::Vec;
 use openzeppelin_stylus::{
     token::erc721::{
         self,
-        extensions::{enumerable, Erc721Enumerable, IErc721Burnable, IErc721Enumerable},
-        Erc721, IErc721,
+        extensions::{enumerable, Erc721Enumerable, IErc721Burnable, IErc721Enumerable, Erc721Metadata},
+        Erc721, IErc721, 
     },
     utils::introspection::erc165::IErc165,
 };
 use stylus_sdk::{
     abi::Bytes,
-    alloy_primitives::{aliases::B32, Address, U256},
+    alloy_primitives::{aliases::B32, Address, U256, U8},
+    crypto::keccak,
     prelude::*,
+    storage::*,
 };
 
 #[derive(SolidityError, Debug)]
@@ -64,10 +66,28 @@ impl From<erc721::Error> for Error {
 struct Erc721Example {
     erc721: Erc721,
     enumerable: Erc721Enumerable,
+    metadata: Erc721Metadata,
+    token_id_counter: StorageU256,
+    token_uris: StorageMap<U256, StorageString>,
+    uris: StorageMap<U8, StorageString>
 }
 
 #[public]
 impl Erc721Example {
+
+    #[constructor]
+    #[payable]
+    pub fn constructor(&mut self) {
+        //self.uris.setter(U8::from(0)).set(String::from("QmVHi3c4qkZcH3cJynzDXRm5n7dzc9R9TUtUcfnWQvhdcw"));
+        //self.uris.setter(U8::from(1)).set(String::from("QmfVMAmNM1kDEBYrC2TPzQDoCRFH6F5tE1e9Mr4FkkR5Xr"));
+        //self.uris.setter(U8::from(2)).set(String::from("QmcvcUaKf6JyCXhLD1by6hJXNruPQGs3kkLg2W1xr7nF1j"));
+        self.metadata.constructor(String::from("SS2-ERC721-NFT"), String::from("SS2NFT"));
+    }
+
+    pub fn _base_uri(&self) -> String {
+        String::from("https://ipfs.io/ipfs/")
+    }
+    
     pub fn mint(&mut self, to: Address, token_id: U256) -> Result<(), Error> {
         self.erc721._mint(to, token_id)?;
 
@@ -218,9 +238,58 @@ impl Erc721Example {
         Ok(self.enumerable.token_of_owner_by_index(owner, index)?)
     }
 
+    /*pub fn uris(&self) -> Vec<String> {
+        self.uris.iter().map(|uri| uri.get()).collect()
+    }*/
+
     // IErc165 trait implementations
     pub fn supports_interface(&self, interface_id: B32) -> bool {
         self.erc721.supports_interface(interface_id)
             || self.enumerable.supports_interface(interface_id)
+    }
+
+    pub fn token_uri(&self, token_id: U256) -> Result<String, Error> {
+        let _token_uri = self.token_uris.get(token_id);
+        let base_uri = self._base_uri();
+        Ok(format!("{}{}", base_uri, _token_uri.get_string()))
+    }
+
+    /*
+    function mintItem(address to) public returns (uint256) {
+		tokenIdCounter++;
+		_safeMint(to, tokenIdCounter);
+
+		bytes32 predictableRandom = keccak256(
+			abi.encodePacked(
+				tokenIdCounter,
+				blockhash(block.number - 1),
+				msg.sender,
+				address(this)
+			)
+		);
+
+		tokenURIs[tokenIdCounter] = uris[
+			uint256(predictableRandom) % uris.length
+		];
+		return tokenIdCounter;
+	}
+     */
+
+    pub fn mint_item(&mut self, to: Address, token_uri: String) -> Result<(), Error> {
+        let token_id = self.token_id_counter.get();
+        self.token_id_counter.set(token_id + U256::from(1));
+        self.safe_mint(to, self.token_id_counter.get(), Bytes::from(b"".to_vec()))?;
+
+        let predictable_random = keccak([
+            self.token_id_counter.get().to_be_bytes(),
+            // self.vm().block_hash(self.vm().block_number() - 1),
+            self.vm().msg_sender().to_vec(),
+            // self.address().to_vec()
+        ].concat()).into();
+
+        let index = predictable_random % self.uris.len();
+        self.token_uris.set(self.token_id_counter.get(), self.uris.get(index));
+
+        Ok(())
     }
 }
