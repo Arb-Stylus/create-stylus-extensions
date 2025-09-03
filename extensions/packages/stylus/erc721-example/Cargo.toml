@@ -19,7 +19,7 @@ tokio = { version = "1.12.0", features = ["full"] }
 [features]
 default = ["mini-alloc"]
 e2e = []
-export-abi = ["openzeppelin-stylus/export-abi"]
+export-abi = ["stylus-sdk/export-abi", "opezeppelin-stylus/export-abi"]
 mini-alloc = ["stylus-sdk/mini-alloc"]
 
 [lib]
