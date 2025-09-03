@@ -92,10 +92,10 @@ const VRFPage: NextPage = () => {
             </div>
             <div className="text-xs mt-2 p-2 rounded  border-black border">
               <strong>Setup (after you deploy the contracts):</strong> Update your{" "}
-              <code className="bg-base-300 px-1 rounded">scaffold.config.ts</code> to include{" "}
-              <code className="bg-base-300 px-1 rounded">chains.arbitrumSepolia</code> and/or{" "}
-              <code className="bg-base-300 px-1 rounded">chains.arbitrum</code> in the{" "}
-              <code className="bg-base-300 px-1 rounded">targetNetworks</code> array.
+              <code className="bg-base-300 px-1 rounded text-base-content">scaffold.config.ts</code> to include{" "}
+              <code className="bg-base-300 px-1 rounded text-base-content">chains.arbitrumSepolia</code> and/or{" "}
+              <code className="bg-base-300 px-1 rounded text-base-content">chains.arbitrum</code> in the{" "}
+              <code className="bg-base-300 px-1 rounded text-base-content">targetNetworks</code> array.
               <br />
               <br />
               <strong>Note:</strong> The VRF Consumer contract is deployed on Arbitrum Sepolia and Arbitrum One.
@@ -109,7 +109,7 @@ const VRFPage: NextPage = () => {
             <h2 className="card-title text-2xl mb-4">What is Chainlink VRF?</h2>
             <div className="space-y-4 text-sm text-base-content">
               <p>
-                <strong>Chainlink VRF (Verifiable Random Function)</strong> is a provably fair and verifiable random
+                <strong>Chainlink VRF (Verifiable Random Function)</strong> is a probably fair and verifiable random
                 number generator (RNG) that enables smart contracts to access random values without compromising
                 security or usability.
               </p>
@@ -209,8 +209,8 @@ const VRFPage: NextPage = () => {
               <div className="bg-base-200 p-3 rounded-lg">
                 <h3 className="font-bold text-sm mb-2 text-base-content">💡 How to use:</h3>
                 <ol className="list-decimal list-inside space-y-1 text-xs text-base-content">
-                  <li>Ensure you&apos;re on Sepolia or Mainnet</li>
-                  <li>Enter a valid VRF Consumer contract address</li>
+                  <li>Ensure you&apos;re on Arbitrum Sepolia or Arbitrum Mainnet</li>
+                  <li>Fund the contract with 0.01 ETH</li>
                   <li>Click &quot;Request Random Words&quot; to initiate</li>
                   <li>Wait for the oracle to fulfill the request</li>
                   <li>Check the status in the panel on the right</li>
@@ -364,10 +364,10 @@ const VRFPage: NextPage = () => {
                     <strong>Paid Amount:</strong> ETH spent for the VRF request
                   </li>
                   <li>
-                    <strong>Fulfilled:</strong> Whether oracle has provided the random number
+                    <strong>Fulfilled:</strong> Whether oracle has provided the random word
                   </li>
                   <li>
-                    <strong>Random Word:</strong> The actual random number (if fulfilled)
+                    <strong>Random Word:</strong> The actual random word (if fulfilled)
                   </li>
                 </ul>
               </div>
@@ -385,13 +385,16 @@ const VRFPage: NextPage = () => {
                 <h3 className="font-bold text-sm mb-2 text-base-content">Stylus Contract Functions:</h3>
                 <ul className="list-disc list-inside space-y-1 text-xs text-base-content">
                   <li>
-                    <code>callWriteRequestRandomNumber</code> - Request random words
+                    <code>requestRandomWords</code> - Request random words
                   </li>
                   <li>
-                    <code>callViewGetLastRequestId</code> - Get latest request ID
+                    <code>getLastRequestId</code> - Get latest request ID
                   </li>
                   <li>
-                    <code>callViewGetRequestStatus</code> - Check request status
+                    <code>getRequestStatus</code> - Check request status
+                  </li>
+                  <li>
+                    <code>withdrawNative</code> - Withdraw eth from the contract
                   </li>
                 </ul>
               </div>
@@ -422,11 +425,7 @@ const VRFPage: NextPage = () => {
               </svg>
               <div className="text-xs text-base-content">
                 <p className="font-bold">For Developers:</p>
-                <p>
-                  This page demonstrates how to integrate Chainlink VRF with Arbitrum Stylus contracts. The Rust
-                  contract acts as a proxy to interact with Chainlink&apos;s Direct Funding Consumer contract. Check out
-                  the source code in <code>packages/stylus/vrf-consumer/src/lib.rs</code>
-                </p>
+                <p>This page demonstrates how to integrate Chainlink VRF with Arbitrum Stylus contracts.</p>
               </div>
             </div>
           </div>
