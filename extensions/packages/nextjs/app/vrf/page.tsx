@@ -33,22 +33,20 @@ const VRFPage: NextPage = () => {
 
   const { data: lastRequestId, refetch: refetchLastRequestId } = useScaffoldReadContract({
     contractName: "vrf-consumer",
-    functionName: "callViewGetLastRequestId",
-    args: [vrfConsumerAddress],
+    functionName: "getLastRequestId",
   });
 
   const { data: requestStatus } = useScaffoldReadContract({
     contractName: "vrf-consumer",
-    functionName: "callViewGetRequestStatus",
-    args: [vrfConsumerAddress, requestId ? BigInt(requestId) : undefined],
+    functionName: "getRequestStatus",
+    args: [lastRequestId ? BigInt(lastRequestId) : undefined],
     watch: true,
   });
 
   const handleRequestRandomWords = async () => {
     try {
       await requestRandomWords({
-        functionName: "callWriteRequestRandomNumber",
-        args: [vrfConsumerAddress],
+        functionName: "requestRandomWords",
       });
     } catch (error) {
       console.error("Error requesting random words:", error);
@@ -174,7 +172,7 @@ const VRFPage: NextPage = () => {
           {/* Request Random Number */}
           <div className="card bg-base-100 shadow-xl">
             <div className="card-body">
-              <h2 className="card-title text-xl mb-4">🎲 Request Random Number</h2>
+              <h2 className="card-title text-xl mb-4">🎲 Request Random Words</h2>
 
               {connectedAddress ? (
                 <button
