@@ -4,6 +4,7 @@ use alloy::sol;
 sol!(
     #[sol(rpc)]
    contract Erc721 {
+        constructor(string memory name, string memory symbol, string memory base_uri);
         function approve(address to, uint256 tokenId) external;
         #[derive(Debug)]
         function balanceOf(address owner) external view returns (uint256 balance);
@@ -18,10 +19,17 @@ sol!(
         function setApprovalForAll(address operator, bool approved) external;
         function totalSupply() external view returns (uint256 totalSupply);
         function transferFrom(address from, address to, uint256 tokenId) external;
-        function safeMint(address to, uint256 tokenId, bytes calldata data) external;
-        function mint(address to, uint256 tokenId) external;
-        function burn(uint256 tokenId) external;
+        function mint(address to) external;
 
+        // ERC721Metadata functions
+        #[derive(Debug)]
+        function name() external view returns (string memory);
+        #[derive(Debug)]
+        function symbol() external view returns (string memory);
+        #[derive(Debug)]
+        function tokenURI(uint256 tokenId) external view returns (string memory);
+
+        // ERC721Enumerable functions
         #[derive(Debug)]
         function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256 tokenId);
         #[derive(Debug)]
