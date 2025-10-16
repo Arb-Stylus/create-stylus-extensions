@@ -30,7 +30,7 @@ use stylus_sdk::{
 use stylus_sdk::call::Call as OldCall;
 
 /// Import OpenZeppelin Ownable functionality
-use openzeppelin_stylus::access::ownable::{self, IOwnable, Ownable};
+use openzeppelin_stylus::access::ownable::{self, Ownable};
 
 // Define persistent storage using the Solidity ABI.
 sol_storage! {
@@ -93,7 +93,6 @@ impl From<ownable::Error> for Error {
 }
 /// Declare that `DirectFundingConsumer` is a contract with the following external methods.
 #[public]
-#[implements(IOwnable<Error = Error>)]
 impl DirectFundingConsumer {
     /// Constructor - initializes the contract with VRF wrapper address
     #[constructor]
@@ -177,6 +176,23 @@ impl DirectFundingConsumer {
         );
 
         Ok(request_id)
+    }
+
+    /// View: get the current native price required to request randomness
+    pub fn get_request_price(&mut self) -> Result<U256, Vec<u8>> {
+        let callback_gas_limit: u32 = self.callback_gas_limit.get().try_into().unwrap_or(100000);
+        let num_words: u32 = self.num_words.get().try_into().unwrap_or(1);
+
+        let external_vrf_wrapper_address = self.i_vrf_v2_plus_wrapper.get();
+        let external_vrf_wrapper = IVRFV2PlusWrapper::new(external_vrf_wrapper_address);
+
+        let price = external_vrf_wrapper.calculate_request_price_native(
+            &mut *self,
+            callback_gas_limit,
+            num_words,
+        )?;
+
+        Ok(price)
     }
 
     /// Internal function to fulfill random words
@@ -295,23 +311,7 @@ impl DirectFundingConsumer {
     }
 }
 
-/// Implementation of the IOwnable interface
-#[public]
-impl IOwnable for DirectFundingConsumer {
-    type Error = Error;
-
-    fn owner(&self) -> Address {
-        self.ownable.owner()
-    }
-
-    fn transfer_ownership(&mut self, new_owner: Address) -> Result<(), Self::Error> {
-        Ok(self.ownable.transfer_ownership(new_owner)?)
-    }
-
-    fn renounce_ownership(&mut self) -> Result<(), Self::Error> {
-        Ok(self.ownable.renounce_ownership()?)
-    }
-}
+// Note: We keep ownership management internal through `ownable`.
 
 fn get_extra_args_for_native_payment() -> Bytes {
     // Encode extra args according to VRFV2PlusClient._argsToBytes()
