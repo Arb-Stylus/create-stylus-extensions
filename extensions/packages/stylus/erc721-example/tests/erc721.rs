@@ -1,5 +1,7 @@
 #![cfg(feature = "e2e")]
 
+// The problem is that openzeppelin-stylus version 0.3.0 is using an older API of stylus-sdk where VM was a struct with a host field, but in stylus-sdk 0.9.0, VM is now a tuple struct
+
 use abi::Erc721;
 use alloy::{
     primitives::{fixed_bytes, uint, Address, Bytes, U256},
@@ -32,9 +34,7 @@ impl<T: SolError> EncodeAsStr for T {
 // ============================================================================
 
 #[e2e::test]
-async fn error_when_checking_balance_of_invalid_owner(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_checking_balance_of_invalid_owner(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
     let invalid_owner = Address::ZERO;
@@ -44,9 +44,9 @@ async fn error_when_checking_balance_of_invalid_owner(
         .call()
         .await
         .expect_err("should return `ERC721InvalidOwner`");
-    assert!(
-        err.reverted_with(Erc721::ERC721InvalidOwner { owner: invalid_owner })
-    );
+    assert!(err.reverted_with(Erc721::ERC721InvalidOwner {
+        owner: invalid_owner
+    }));
 
     Ok(())
 }
@@ -56,17 +56,14 @@ async fn balance_of_zero_balance(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
-    let Erc721::balanceOfReturn { balance } =
-        contract.balanceOf(alice.address()).call().await?;
+    let Erc721::balanceOfReturn { balance } = contract.balanceOf(alice.address()).call().await?;
     assert_eq!(uint!(0_U256), balance);
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_checking_owner_of_nonexistent_token(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_checking_owner_of_nonexistent_token(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
     let token_id = random_token_id();
@@ -77,9 +74,7 @@ async fn error_when_checking_owner_of_nonexistent_token(
         .await
         .expect_err("should return `ERC721NonexistentToken`");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     Ok(())
 }
@@ -90,54 +85,54 @@ async fn mints(alice: Account) -> eyre::Result<()> {
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let alice_addr = alice.address();
-    let token_id = random_token_id();
-    let receipt = receipt!(contract.mint(alice_addr, token_id))?;
+    let receipt = receipt!(contract.mint(alice_addr))?;
 
+    // The first mint will create token ID 1
+    let token_id = uint!(1_U256);
     assert!(receipt.emits(Erc721::Transfer {
         from: Address::ZERO,
         to: alice_addr,
         tokenId: token_id
     }));
 
-    let Erc721::ownerOfReturn { ownerOf: owner_of } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf: owner_of } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, owner_of);
 
-    let Erc721::balanceOfReturn { balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn { balance } = contract.balanceOf(alice_addr).call().await?;
     assert_eq!(uint!(1_U256), balance);
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_minting_token_id_twice(alice: Account) -> eyre::Result<()> {
+async fn mints_multiple_tokens(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let alice_addr = alice.address();
-    let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let err = send!(contract.mint(alice_addr, token_id))
-        .expect_err("should not mint a token id twice");
-    assert!(err
-        .reverted_with(Erc721::ERC721InvalidSender { sender: Address::ZERO }));
+    // Since mint now generates token IDs automatically, we can't mint the same token ID twice
+    // This test is no longer applicable with the new mint function signature
+    // The contract will generate a new token ID for each mint
+    let receipt = receipt!(contract.mint(alice_addr))?;
+    assert!(receipt.emits(Erc721::Transfer {
+        from: Address::ZERO,
+        to: alice_addr,
+        tokenId: uint!(2_U256)
+    }));
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_minting_token_to_invalid_receiver(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_minting_token_to_invalid_receiver(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
-    let token_id = random_token_id();
     let invalid_receiver = Address::ZERO;
 
-    let err = send!(contract.mint(invalid_receiver, token_id))
+    let err = send!(contract.mint(invalid_receiver))
         .expect_err("should not mint a token for invalid receiver");
     assert!(err.reverted_with(Erc721::ERC721InvalidReceiver {
         receiver: invalid_receiver
@@ -153,17 +148,18 @@ async fn transfers_from(alice: Account, bob: Account) -> eyre::Result<()> {
 
     let alice_addr = alice.address();
     let bob_addr = bob.address();
-    let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
+    let token_id = uint!(1_U256); // First mint creates token ID 1
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract.balanceOf(bob_addr).call().await?;
 
-    let receipt =
-        receipt!(contract.transferFrom(alice_addr, bob_addr, token_id))?;
+    let receipt = receipt!(contract.transferFrom(alice_addr, bob_addr, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -171,15 +167,16 @@ async fn transfers_from(alice: Account, bob: Account) -> eyre::Result<()> {
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -189,10 +186,7 @@ async fn transfers_from(alice: Account, bob: Account) -> eyre::Result<()> {
 }
 
 #[e2e::test]
-async fn transfers_from_approved_token(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn transfers_from_approved_token(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract_alice = Erc721::new(contract_addr, &alice.wallet);
     let contract_bob = Erc721::new(contract_addr, &bob.wallet);
@@ -201,17 +195,18 @@ async fn transfers_from_approved_token(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
     watch!(contract_alice.approve(bob_addr, token_id))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
-    let receipt =
-        receipt!(contract_bob.transferFrom(alice_addr, bob_addr, token_id))?;
+    let receipt = receipt!(contract_bob.transferFrom(alice_addr, bob_addr, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -219,15 +214,16 @@ async fn transfers_from_approved_token(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract_alice.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract_alice.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -237,10 +233,7 @@ async fn transfers_from_approved_token(
 }
 
 #[e2e::test]
-async fn transfers_from_approved_for_all(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn transfers_from_approved_for_all(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract_alice = Erc721::new(contract_addr, &alice.wallet);
     let contract_bob = Erc721::new(contract_addr, &bob.wallet);
@@ -249,17 +242,18 @@ async fn transfers_from_approved_for_all(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
     watch!(contract_alice.setApprovalForAll(bob_addr, true))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
-    let receipt =
-        receipt!(contract_bob.transferFrom(alice_addr, bob_addr, token_id))?;
+    let receipt = receipt!(contract_bob.transferFrom(alice_addr, bob_addr, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -267,15 +261,16 @@ async fn transfers_from_approved_for_all(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract_alice.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract_alice.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -285,9 +280,7 @@ async fn transfers_from_approved_for_all(
 }
 
 #[e2e::test]
-async fn error_when_transfer_to_invalid_receiver(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_transfer_to_invalid_receiver(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -295,18 +288,16 @@ async fn error_when_transfer_to_invalid_receiver(
     let invalid_receiver = Address::ZERO;
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let err =
-        send!(contract.transferFrom(alice_addr, invalid_receiver, token_id))
-            .expect_err("should not transfer the token to invalid receiver");
+    let err = send!(contract.transferFrom(alice_addr, invalid_receiver, token_id))
+        .expect_err("should not transfer the token to invalid receiver");
 
     assert!(err.reverted_with(Erc721::ERC721InvalidReceiver {
         receiver: invalid_receiver
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -327,7 +318,7 @@ async fn error_when_transfer_from_incorrect_owner(
 
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let err = send!(contract.transferFrom(dave_addr, bob_addr, token_id))
         .expect_err("should not transfer the token from incorrect owner");
@@ -338,8 +329,7 @@ async fn error_when_transfer_from_incorrect_owner(
         tokenId: token_id
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -356,7 +346,7 @@ async fn error_when_transfer_with_insufficient_approval(
     let alice_addr = alice.address();
     let bob_addr = bob.address();
     let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let contract = Erc721::new(contract_addr, &bob.wallet);
     let err = send!(contract.transferFrom(alice_addr, bob_addr, token_id))
@@ -367,18 +357,14 @@ async fn error_when_transfer_with_insufficient_approval(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_transfer_nonexistent_token(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn error_when_transfer_nonexistent_token(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -387,9 +373,7 @@ async fn error_when_transfer_nonexistent_token(
 
     let err = send!(contract.transferFrom(alice_addr, bob.address(), token_id))
         .expect_err("should not transfer a non-existent token");
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     let err = contract
         .ownerOf(token_id)
@@ -397,9 +381,7 @@ async fn error_when_transfer_nonexistent_token(
         .await
         .expect_err("should return `ERC721NonexistentToken`");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     Ok(())
 }
@@ -412,16 +394,17 @@ async fn safe_transfers_from(alice: Account, bob: Account) -> eyre::Result<()> {
     let alice_addr = alice.address();
     let bob_addr = bob.address();
     let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract.balanceOf(bob_addr).call().await?;
 
-    let receipt =
-        receipt!(contract.safeTransferFrom_0(alice_addr, bob_addr, token_id))?;
+    let receipt = receipt!(contract.safeTransferFrom_0(alice_addr, bob_addr, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -429,15 +412,16 @@ async fn safe_transfers_from(alice: Account, bob: Account) -> eyre::Result<()> {
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -447,32 +431,27 @@ async fn safe_transfers_from(alice: Account, bob: Account) -> eyre::Result<()> {
 }
 
 #[e2e::test]
-async fn safe_transfers_to_receiver_contract(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn safe_transfers_to_receiver_contract(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let receiver_address =
-        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::None)
-            .await?;
+        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::None).await?;
 
     let alice_addr = alice.address();
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_receiver_balance } =
-        contract.balanceOf(receiver_address).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_receiver_balance,
+    } = contract.balanceOf(receiver_address).call().await?;
 
-    let receipt = receipt!(contract.safeTransferFrom_0(
-        alice_addr,
-        receiver_address,
-        token_id
-    ))?;
+    let receipt = receipt!(contract.safeTransferFrom_0(alice_addr, receiver_address, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -487,15 +466,16 @@ async fn safe_transfers_to_receiver_contract(
         data: fixed_bytes!("").into(),
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(receiver_address, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: receiver_balance } =
-        contract.balanceOf(receiver_address).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: receiver_balance,
+    } = contract.balanceOf(receiver_address).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -505,10 +485,7 @@ async fn safe_transfers_to_receiver_contract(
 }
 
 #[e2e::test]
-async fn safe_transfers_from_approved_token(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn safe_transfers_from_approved_token(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract_alice = Erc721::new(contract_addr, &alice.wallet);
     let contract_bob = Erc721::new(contract_addr, &bob.wallet);
@@ -517,18 +494,18 @@ async fn safe_transfers_from_approved_token(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
     watch!(contract_alice.approve(bob_addr, token_id))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
-    let receipt = receipt!(
-        contract_bob.safeTransferFrom_0(alice_addr, bob_addr, token_id)
-    )?;
+    let receipt = receipt!(contract_bob.safeTransferFrom_0(alice_addr, bob_addr, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -536,15 +513,16 @@ async fn safe_transfers_from_approved_token(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract_alice.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract_alice.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -554,10 +532,7 @@ async fn safe_transfers_from_approved_token(
 }
 
 #[e2e::test]
-async fn safe_transfers_from_approved_for_all(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn safe_transfers_from_approved_for_all(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract_alice = Erc721::new(contract_addr, &alice.wallet);
     let contract_bob = Erc721::new(contract_addr, &bob.wallet);
@@ -566,18 +541,18 @@ async fn safe_transfers_from_approved_for_all(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
     watch!(contract_alice.setApprovalForAll(bob_addr, true))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
-    let receipt = receipt!(
-        contract_bob.safeTransferFrom_0(alice_addr, bob_addr, token_id)
-    )?;
+    let receipt = receipt!(contract_bob.safeTransferFrom_0(alice_addr, bob_addr, token_id))?;
 
     assert!(receipt.emits(Erc721::Transfer {
         from: alice_addr,
@@ -585,15 +560,16 @@ async fn safe_transfers_from_approved_for_all(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract_alice.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract_alice.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -603,9 +579,7 @@ async fn safe_transfers_from_approved_for_all(
 }
 
 #[e2e::test]
-async fn error_when_safe_transfer_to_invalid_receiver(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_safe_transfer_to_invalid_receiver(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -613,20 +587,15 @@ async fn error_when_safe_transfer_to_invalid_receiver(
     let invalid_receiver = Address::ZERO;
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let err = send!(contract.safeTransferFrom_0(
-        alice_addr,
-        invalid_receiver,
-        token_id
-    ))
-    .expect_err("should not transfer the token to invalid receiver");
+    let err = send!(contract.safeTransferFrom_0(alice_addr, invalid_receiver, token_id))
+        .expect_err("should not transfer the token to invalid receiver");
     assert!(err.reverted_with(Erc721::ERC721InvalidReceiver {
         receiver: invalid_receiver
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -647,7 +616,7 @@ async fn error_when_safe_transfer_from_incorrect_owner(
 
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let err = send!(contract.safeTransferFrom_0(dave_addr, bob_addr, token_id))
         .expect_err("should not transfer the token from incorrect owner");
@@ -658,8 +627,7 @@ async fn error_when_safe_transfer_from_incorrect_owner(
         tokenId: token_id
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -676,21 +644,19 @@ async fn error_when_safe_transfer_with_insufficient_approval(
     let alice_addr = alice.address();
     let bob_addr = bob.address();
     let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let contract = Erc721::new(contract_addr, &bob.wallet);
 
-    let err =
-        send!(contract.safeTransferFrom_0(alice_addr, bob_addr, token_id))
-            .expect_err("should not transfer unapproved token");
+    let err = send!(contract.safeTransferFrom_0(alice_addr, bob_addr, token_id))
+        .expect_err("should not transfer unapproved token");
 
     assert!(err.reverted_with(Erc721::ERC721InsufficientApproval {
         operator: bob_addr,
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -707,12 +673,9 @@ async fn error_when_safe_transfer_nonexistent_token(
     let alice_addr = alice.address();
     let token_id = random_token_id();
 
-    let err =
-        send!(contract.safeTransferFrom_0(alice_addr, bob.address(), token_id))
-            .expect_err("should not transfer a non-existent token");
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    let err = send!(contract.safeTransferFrom_0(alice_addr, bob.address(), token_id))
+        .expect_err("should not transfer a non-existent token");
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     let err = contract
         .ownerOf(token_id)
@@ -720,31 +683,28 @@ async fn error_when_safe_transfer_nonexistent_token(
         .await
         .expect_err("should return `ERC721NonexistentToken`");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     Ok(())
 }
 
 #[e2e::test]
-async fn safe_transfers_from_with_data(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn safe_transfers_from_with_data(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let alice_addr = alice.address();
     let bob_addr = bob.address();
     let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract.balanceOf(bob_addr).call().await?;
 
     let receipt = receipt!(contract.safeTransferFrom_1(
         alice_addr,
@@ -759,15 +719,16 @@ async fn safe_transfers_from_with_data(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -777,27 +738,26 @@ async fn safe_transfers_from_with_data(
 }
 
 #[e2e::test]
-async fn safe_transfers_with_data_to_receiver_contract(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn safe_transfers_with_data_to_receiver_contract(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let receiver_address =
-        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::None)
-            .await?;
+        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::None).await?;
 
     let alice_addr = alice.address();
     let token_id = random_token_id();
     let data: Bytes = fixed_bytes!("deadbeef").into();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_receiver_balance } =
-        contract.balanceOf(receiver_address).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_receiver_balance,
+    } = contract.balanceOf(receiver_address).call().await?;
 
     let receipt = receipt!(contract.safeTransferFrom_1(
         alice_addr,
@@ -819,15 +779,16 @@ async fn safe_transfers_with_data_to_receiver_contract(
         data,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(receiver_address, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: receiver_balance } =
-        contract.balanceOf(receiver_address).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: receiver_balance,
+    } = contract.balanceOf(receiver_address).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -849,14 +810,16 @@ async fn safe_transfers_from_with_data_approved_token(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
     watch!(contract_alice.approve(bob_addr, token_id))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let receipt = receipt!(contract_bob.safeTransferFrom_1(
         alice_addr,
@@ -871,15 +834,16 @@ async fn safe_transfers_from_with_data_approved_token(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract_alice.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract_alice.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -901,14 +865,16 @@ async fn safe_transfers_from_with_data_approved_for_all(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
     watch!(contract_alice.setApprovalForAll(bob_addr, true))?;
 
-    let Erc721::balanceOfReturn { balance: initial_alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: initial_bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: initial_bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let receipt = receipt!(contract_bob.safeTransferFrom_1(
         alice_addr,
@@ -923,15 +889,16 @@ async fn safe_transfers_from_with_data_approved_for_all(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract_alice.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract_alice.ownerOf(token_id).call().await?;
     assert_eq!(bob_addr, ownerOf);
 
-    let Erc721::balanceOfReturn { balance: alice_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: alice_balance,
+    } = contract_alice.balanceOf(alice_addr).call().await?;
 
-    let Erc721::balanceOfReturn { balance: bob_balance } =
-        contract_bob.balanceOf(bob_addr).call().await?;
+    let Erc721::balanceOfReturn {
+        balance: bob_balance,
+    } = contract_bob.balanceOf(bob_addr).call().await?;
 
     let one = uint!(1_U256);
     assert_eq!(initial_alice_balance - one, alice_balance);
@@ -951,7 +918,7 @@ async fn error_when_safe_transfer_with_data_to_invalid_receiver(
     let invalid_receiver = Address::ZERO;
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let err = send!(contract.safeTransferFrom_1(
         alice_addr,
@@ -964,8 +931,7 @@ async fn error_when_safe_transfer_with_data_to_invalid_receiver(
         receiver: invalid_receiver
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -986,7 +952,7 @@ async fn error_when_safe_transfer_with_data_from_incorrect_owner(
 
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let err = send!(contract.safeTransferFrom_1(
         dave_addr,
@@ -1002,8 +968,7 @@ async fn error_when_safe_transfer_with_data_from_incorrect_owner(
         tokenId: token_id
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -1020,7 +985,7 @@ async fn error_when_safe_transfer_with_data_with_insufficient_approval(
     let alice_addr = alice.address();
     let bob_addr = bob.address();
     let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
     let contract = Erc721::new(contract_addr, &bob.wallet);
 
@@ -1037,8 +1002,7 @@ async fn error_when_safe_transfer_with_data_with_insufficient_approval(
         tokenId: token_id,
     }));
 
-    let Erc721::ownerOfReturn { ownerOf } =
-        contract.ownerOf(token_id).call().await?;
+    let Erc721::ownerOfReturn { ownerOf } = contract.ownerOf(token_id).call().await?;
     assert_eq!(alice_addr, ownerOf);
 
     Ok(())
@@ -1062,9 +1026,7 @@ async fn error_when_safe_transfer_with_data_nonexistent_token(
         fixed_bytes!("deadbeef").into()
     ))
     .expect_err("should not transfer a non-existent token");
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     let err = contract
         .ownerOf(token_id)
@@ -1072,17 +1034,13 @@ async fn error_when_safe_transfer_with_data_nonexistent_token(
         .await
         .expect_err("should return `ERC721NonexistentToken`");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     Ok(())
 }
 
 #[e2e::test]
-async fn errors_when_receiver_reverts_with_reason(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn errors_when_receiver_reverts_with_reason(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -1095,18 +1053,15 @@ async fn errors_when_receiver_reverts_with_reason(
     let alice_addr = alice.address();
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let err = send!(contract.safeTransferFrom_0(
-        alice_addr,
-        receiver_address,
-        token_id
-    ))
-    .expect_err("should not transfer when receiver errors with reason");
+    let err = send!(contract.safeTransferFrom_0(alice_addr, receiver_address, token_id))
+        .expect_err("should not transfer when receiver errors with reason");
 
-    let message =
-        Erc721::Error { message: "ERC721ReceiverMock: reverting".to_string() }
-            .encode_as_str();
+    let message = Erc721::Error {
+        message: "ERC721ReceiverMock: reverting".to_string(),
+    }
+    .encode_as_str();
 
     assert!(err.reverted_with(Erc721::InvalidReceiverWithReason { message }));
 
@@ -1114,9 +1069,7 @@ async fn errors_when_receiver_reverts_with_reason(
 }
 
 #[e2e::test]
-async fn errors_when_receiver_reverts_without_reason(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn errors_when_receiver_reverts_without_reason(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -1129,14 +1082,10 @@ async fn errors_when_receiver_reverts_without_reason(
     let alice_addr = alice.address();
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let err = send!(contract.safeTransferFrom_0(
-        alice_addr,
-        receiver_address,
-        token_id
-    ))
-    .expect_err("should not transfer when receiver reverts");
+    let err = send!(contract.safeTransferFrom_0(alice_addr, receiver_address, token_id))
+        .expect_err("should not transfer when receiver reverts");
 
     assert!(err.reverted_with(Erc721::ERC721InvalidReceiver {
         receiver: receiver_address
@@ -1151,24 +1100,20 @@ async fn errors_when_receiver_panics(alice: Account) -> eyre::Result<()> {
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let receiver_address =
-        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::Panic)
-            .await?;
+        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::Panic).await?;
 
     let alice_addr = alice.address();
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let err = send!(contract.safeTransferFrom_0(
-        alice_addr,
-        receiver_address,
-        token_id
-    ))
-    .expect_err("should not transfer when receiver panics");
+    let err = send!(contract.safeTransferFrom_0(alice_addr, receiver_address, token_id))
+        .expect_err("should not transfer when receiver panics");
 
-    let message =
-        Erc721::Panic { code: U256::from(PanicCode::DivisionByZero as u8) }
-            .encode_as_str();
+    let message = Erc721::Panic {
+        code: U256::from(PanicCode::DivisionByZero as u8),
+    }
+    .encode_as_str();
     assert!(err.reverted_with(Erc721::InvalidReceiverWithReason { message }));
 
     Ok(())
@@ -1183,10 +1128,9 @@ async fn approves(alice: Account, bob: Account) -> eyre::Result<()> {
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract.mint(alice_addr, token_id))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::getApprovedReturn { approved } =
-        contract.getApproved(token_id).call().await?;
+    let Erc721::getApprovedReturn { approved } = contract.getApproved(token_id).call().await?;
     assert_eq!(Address::ZERO, approved);
 
     let receipt = receipt!(contract.approve(bob_addr, token_id))?;
@@ -1197,8 +1141,7 @@ async fn approves(alice: Account, bob: Account) -> eyre::Result<()> {
         tokenId: token_id,
     }));
 
-    let Erc721::getApprovedReturn { approved } =
-        contract.getApproved(token_id).call().await?;
+    let Erc721::getApprovedReturn { approved } = contract.getApproved(token_id).call().await?;
     assert_eq!(bob_addr, approved);
 
     Ok(())
@@ -1218,18 +1161,13 @@ async fn error_when_approve_for_nonexistent_token(
     let err = send!(contract.approve(bob_addr, token_id))
         .expect_err("should not approve for a non-existent token");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_approve_by_invalid_approver(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn error_when_approve_by_invalid_approver(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract_alice = Erc721::new(contract_addr, &alice.wallet);
     let contract_bob = Erc721::new(contract_addr, &bob.wallet);
@@ -1238,26 +1176,21 @@ async fn error_when_approve_by_invalid_approver(
     let bob_addr = bob.address();
     let token_id = random_token_id();
 
-    watch!(contract_alice.mint(alice_addr, token_id))?;
+    watch!(contract_alice.mint(alice_addr))?;
 
     let err = send!(contract_bob.approve(bob_addr, token_id))
         .expect_err("should not approve when invalid approver");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721InvalidApprover { approver: bob_addr })
-    );
+    assert!(err.reverted_with(Erc721::ERC721InvalidApprover { approver: bob_addr }));
 
-    let Erc721::getApprovedReturn { approved } =
-        contract_bob.getApproved(token_id).call().await?;
+    let Erc721::getApprovedReturn { approved } = contract_bob.getApproved(token_id).call().await?;
     assert_eq!(Address::ZERO, approved);
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_checking_approved_of_nonexistent_token(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_checking_approved_of_nonexistent_token(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -1269,17 +1202,12 @@ async fn error_when_checking_approved_of_nonexistent_token(
         .await
         .expect_err("should return `ERC721NonexistentToken`");
 
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
+    assert!(err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id }));
     Ok(())
 }
 
 #[e2e::test]
-async fn sets_approval_for_all(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
+async fn sets_approval_for_all(alice: Account, bob: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -1287,8 +1215,7 @@ async fn sets_approval_for_all(
     let bob_addr = bob.address();
 
     let approved_value = true;
-    let receipt =
-        receipt!(contract.setApprovalForAll(bob_addr, approved_value))?;
+    let receipt = receipt!(contract.setApprovalForAll(bob_addr, approved_value))?;
 
     assert!(receipt.emits(Erc721::ApprovalForAll {
         owner: alice_addr,
@@ -1296,13 +1223,14 @@ async fn sets_approval_for_all(
         approved: approved_value,
     }));
 
-    let Erc721::isApprovedForAllReturn { approved } =
-        contract.isApprovedForAll(alice_addr, bob_addr).call().await?;
+    let Erc721::isApprovedForAllReturn { approved } = contract
+        .isApprovedForAll(alice_addr, bob_addr)
+        .call()
+        .await?;
     assert_eq!(approved_value, approved);
 
     let approved_value = false;
-    let receipt =
-        receipt!(contract.setApprovalForAll(bob_addr, approved_value))?;
+    let receipt = receipt!(contract.setApprovalForAll(bob_addr, approved_value))?;
 
     assert!(receipt.emits(Erc721::ApprovalForAll {
         owner: alice_addr,
@@ -1310,17 +1238,17 @@ async fn sets_approval_for_all(
         approved: approved_value,
     }));
 
-    let Erc721::isApprovedForAllReturn { approved } =
-        contract.isApprovedForAll(alice_addr, bob_addr).call().await?;
+    let Erc721::isApprovedForAllReturn { approved } = contract
+        .isApprovedForAll(alice_addr, bob_addr)
+        .call()
+        .await?;
     assert_eq!(approved_value, approved);
 
     Ok(())
 }
 
 #[e2e::test]
-async fn error_when_set_approval_for_all_by_invalid_operator(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_set_approval_for_all_by_invalid_operator(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -1337,9 +1265,7 @@ async fn error_when_set_approval_for_all_by_invalid_operator(
 }
 
 #[e2e::test]
-async fn is_approved_for_all_invalid_operator(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn is_approved_for_all_invalid_operator(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
@@ -1355,446 +1281,12 @@ async fn is_approved_for_all_invalid_operator(
     Ok(())
 }
 
-#[e2e::test]
-async fn safe_mint_to_eoa_without_data(alice: Account) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-    let alice_addr = alice.address();
-
-    let token_id = random_token_id();
-    let data = Bytes::new();
-
-    let initial_balance =
-        contract.balanceOf(alice.address()).call().await?.balance;
-
-    let receipt = receipt!(contract.safeMint(alice_addr, token_id, data))?;
-    assert!(receipt.emits(Erc721::Transfer {
-        from: Address::ZERO,
-        to: alice_addr,
-        tokenId: token_id,
-    }));
-
-    let owner_of = contract.ownerOf(token_id).call().await?.ownerOf;
-    assert_eq!(alice_addr, owner_of);
-
-    let balance = contract.balanceOf(alice.address()).call().await?.balance;
-    assert_eq!(balance, initial_balance + uint!(1_U256));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn safe_mint_to_eoa_with_data(alice: Account) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-    let alice_addr = alice.address();
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    let initial_balance =
-        contract.balanceOf(alice.address()).call().await?.balance;
-
-    let receipt = receipt!(contract.safeMint(alice_addr, token_id, data))?;
-    assert!(receipt.emits(Erc721::Transfer {
-        from: Address::ZERO,
-        to: alice_addr,
-        tokenId: token_id,
-    }));
-
-    let owner_of = contract.ownerOf(token_id).call().await?.ownerOf;
-    assert_eq!(alice_addr, owner_of);
-
-    let balance = contract.balanceOf(alice.address()).call().await?.balance;
-    assert_eq!(balance, initial_balance + uint!(1_U256));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn safe_mint_to_receiver_contract_without_data(
-    alice: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-    let receiver_address =
-        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::None)
-            .await?;
-
-    let token_id = random_token_id();
-    let data = Bytes::new();
-
-    let initial_balance =
-        contract.balanceOf(alice.address()).call().await?.balance;
-
-    let receipt =
-        receipt!(contract.safeMint(receiver_address, token_id, data.clone()))?;
-
-    assert!(receipt.emits(Erc721::Transfer {
-        from: Address::ZERO,
-        to: receiver_address,
-        tokenId: token_id,
-    }));
-
-    assert!(receipt.emits(ERC721ReceiverMock::Received {
-        operator: alice.address(),
-        from: Address::ZERO,
-        tokenId: token_id,
-        data,
-    }));
-
-    let owner_of = contract.ownerOf(token_id).call().await?.ownerOf;
-    assert_eq!(receiver_address, owner_of);
-
-    let balance = contract.balanceOf(receiver_address).call().await?.balance;
-    assert_eq!(balance, initial_balance + uint!(1_U256));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn safe_mint_to_receiver_contract_with_data(
-    alice: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-    let receiver_address =
-        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::None)
-            .await?;
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    let initial_balance =
-        contract.balanceOf(alice.address()).call().await?.balance;
-
-    let receipt =
-        receipt!(contract.safeMint(receiver_address, token_id, data.clone()))?;
-
-    assert!(receipt.emits(Erc721::Transfer {
-        from: Address::ZERO,
-        to: receiver_address,
-        tokenId: token_id,
-    }));
-
-    assert!(receipt.emits(ERC721ReceiverMock::Received {
-        operator: alice.address(),
-        from: Address::ZERO,
-        tokenId: token_id,
-        data,
-    }));
-
-    let owner_of = contract.ownerOf(token_id).call().await?.ownerOf;
-    assert_eq!(receiver_address, owner_of);
-
-    let balance = contract.balanceOf(receiver_address).call().await?.balance;
-    assert_eq!(balance, initial_balance + uint!(1_U256));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_safe_mint_to_invalid_receiver_contract(
-    alice: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    let err = send!(contract.safeMint(contract_addr, token_id, data))
-        .expect_err("should not safe mint the token to invalid receiver");
-
-    assert!(err.reverted_with(Erc721::ERC721InvalidReceiver {
-        receiver: contract_addr
-    }));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_safe_mint_to_invalid_sender_with_data(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    watch!(contract.mint(alice.address(), token_id))?;
-
-    let err = send!(contract.safeMint(bob.address(), token_id, data))
-        .expect_err("should not safe mint an existing token");
-
-    assert!(err
-        .reverted_with(Erc721::ERC721InvalidSender { sender: Address::ZERO }));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_receiver_reverts_with_reason_on_safe_mint_with_data(
-    alice: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let receiver_address = receiver::deploy(
-        &alice.wallet,
-        ERC721ReceiverMock::RevertType::RevertWithMessage,
-    )
-    .await?;
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    let err = send!(contract.safeMint(receiver_address, token_id, data))
-        .expect_err("should not safe mint when receiver errors with reason");
-
-    let message =
-        Erc721::Error { message: "ERC721ReceiverMock: reverting".to_string() }
-            .encode_as_str();
-
-    assert!(err.reverted_with(Erc721::InvalidReceiverWithReason { message }));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_receiver_reverts_without_reason_on_safe_mint_with_data(
-    alice: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let receiver_address = receiver::deploy(
-        &alice.wallet,
-        ERC721ReceiverMock::RevertType::RevertWithoutMessage,
-    )
-    .await?;
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    let err = send!(contract.safeMint(receiver_address, token_id, data))
-        .expect_err(
-            "should not safe mint when receiver reverts without reason",
-        );
-
-    assert!(err.reverted_with(Erc721::ERC721InvalidReceiver {
-        receiver: receiver_address
-    }));
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_receiver_panics_on_safe_mint_with_data(
-    alice: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let receiver_address =
-        receiver::deploy(&alice.wallet, ERC721ReceiverMock::RevertType::Panic)
-            .await?;
-
-    let token_id = random_token_id();
-    let data: Bytes = fixed_bytes!("deadbeef").into();
-
-    let err = send!(contract.safeMint(receiver_address, token_id, data))
-        .expect_err("should not safe mint when receiver panics");
-
-    let message =
-        Erc721::Panic { code: U256::from(PanicCode::DivisionByZero as u8) }
-            .encode_as_str();
-    assert!(err.reverted_with(Erc721::InvalidReceiverWithReason { message }));
-
-    Ok(())
-}
+// Note: safeMint function removed from contract
 
 // ============================================================================
 // Integration Tests: ERC-721 Burnable Extension
 // ============================================================================
-
-#[e2e::test]
-async fn burns(alice: Account) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let alice_addr = alice.address();
-    let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
-
-    let Erc721::balanceOfReturn { balance: initial_balance } =
-        contract.balanceOf(alice_addr).call().await?;
-
-    let receipt = receipt!(contract.burn(token_id))?;
-
-    assert!(receipt.emits(Erc721::Transfer {
-        from: alice_addr,
-        to: Address::ZERO,
-        tokenId: token_id,
-    }));
-
-    let Erc721::balanceOfReturn { balance } =
-        contract.balanceOf(alice_addr).call().await?;
-
-    assert_eq!(initial_balance - uint!(1_U256), balance);
-
-    let err = contract
-        .ownerOf(token_id)
-        .call()
-        .await
-        .expect_err("should return `ERC721NonexistentToken`");
-
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn burns_approved_token(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract_alice = Erc721::new(contract_addr, &alice.wallet);
-    let contract_bob = Erc721::new(contract_addr, &bob.wallet);
-
-    let alice_addr = alice.address();
-    let bob_addr = bob.address();
-    let token_id = random_token_id();
-
-    watch!(contract_alice.mint(alice_addr, token_id))?;
-    watch!(contract_alice.approve(bob_addr, token_id))?;
-
-    let Erc721::balanceOfReturn { balance: initial_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
-
-    let receipt = receipt!(contract_bob.burn(token_id))?;
-
-    assert!(receipt.emits(Erc721::Transfer {
-        from: alice_addr,
-        to: Address::ZERO,
-        tokenId: token_id,
-    }));
-
-    let Erc721::balanceOfReturn { balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
-
-    assert_eq!(initial_balance - uint!(1_U256), balance);
-
-    let err = contract_bob
-        .ownerOf(token_id)
-        .call()
-        .await
-        .expect_err("should return `ERC721NonexistentToken`");
-
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn burns_approved_for_all(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract_alice = Erc721::new(contract_addr, &alice.wallet);
-    let contract_bob = Erc721::new(contract_addr, &bob.wallet);
-
-    let alice_addr = alice.address();
-    let bob_addr = bob.address();
-    let token_id = random_token_id();
-
-    watch!(contract_alice.mint(alice_addr, token_id))?;
-    watch!(contract_alice.setApprovalForAll(bob_addr, true))?;
-
-    let Erc721::balanceOfReturn { balance: initial_balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
-
-    let receipt = receipt!(contract_bob.burn(token_id))?;
-
-    assert!(receipt.emits(Erc721::Transfer {
-        from: alice_addr,
-        to: Address::ZERO,
-        tokenId: token_id,
-    }));
-
-    let Erc721::balanceOfReturn { balance } =
-        contract_alice.balanceOf(alice_addr).call().await?;
-
-    assert_eq!(initial_balance - uint!(1_U256), balance);
-
-    let err = contract_bob
-        .ownerOf(token_id)
-        .call()
-        .await
-        .expect_err("should return `ERC721NonexistentToken`");
-
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_burn_with_insufficient_approval(
-    alice: Account,
-    bob: Account,
-) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let alice_addr = alice.address();
-    let bob_addr = bob.address();
-    let token_id = random_token_id();
-    watch!(contract.mint(alice_addr, token_id))?;
-
-    let Erc721::balanceOfReturn { balance: initial_balance } =
-        contract.balanceOf(alice_addr).call().await?;
-
-    let contract = Erc721::new(contract_addr, &bob.wallet);
-    let err = send!(contract.burn(token_id))
-        .expect_err("should not burn unapproved token");
-
-    assert!(err.reverted_with(Erc721::ERC721InsufficientApproval {
-        operator: bob_addr,
-        tokenId: token_id,
-    }));
-
-    let Erc721::balanceOfReturn { balance } =
-        contract.balanceOf(alice_addr).call().await?;
-
-    assert_eq!(initial_balance, balance);
-
-    Ok(())
-}
-
-#[e2e::test]
-async fn error_when_burn_nonexistent_token(alice: Account) -> eyre::Result<()> {
-    let contract_addr = alice.as_deployer().deploy().await?.contract_address;
-    let contract = Erc721::new(contract_addr, &alice.wallet);
-
-    let token_id = random_token_id();
-
-    let err = send!(contract.burn(token_id))
-        .expect_err("should not burn a non-existent token");
-    assert!(
-        err.reverted_with(Erc721::ERC721NonexistentToken { tokenId: token_id })
-    );
-    Ok(())
-}
+// Note: Burn functionality has been removed from the contract
 
 // ============================================================================
 // Integration Tests: ERC-721 Enumerable Extension
@@ -1808,13 +1300,12 @@ async fn totally_supply_works(alice: Account) -> eyre::Result<()> {
     let alice_addr = alice.address();
 
     let token_1 = random_token_id();
-    watch!(contract.mint(alice_addr, token_1))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_2 = random_token_id();
-    watch!(contract.mint(alice_addr, token_2))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::totalSupplyReturn { totalSupply } =
-        contract.totalSupply().call().await?;
+    let Erc721::totalSupplyReturn { totalSupply } = contract.totalSupply().call().await?;
 
     assert_eq!(uint!(2_U256), totalSupply);
 
@@ -1830,8 +1321,8 @@ async fn error_when_checking_token_of_owner_by_index_out_of_bound(
 
     let alice_addr = alice.address();
 
-    watch!(contract.mint(alice_addr, random_token_id()))?;
-    watch!(contract.mint(alice_addr, random_token_id()))?;
+    watch!(contract.mint(alice_addr))?;
+    watch!(contract.mint(alice_addr))?;
 
     let index_out_of_bound = uint!(2_U256);
 
@@ -1882,17 +1373,21 @@ async fn token_of_owner_by_index_works(alice: Account) -> eyre::Result<()> {
     let alice_addr = alice.address();
 
     let token_0 = random_token_id();
-    watch!(contract.mint(alice_addr, token_0))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_1 = random_token_id();
-    watch!(contract.mint(alice_addr, token_1))?;
+    watch!(contract.mint(alice_addr))?;
 
-    let Erc721::tokenOfOwnerByIndexReturn { tokenId } =
-        contract.tokenOfOwnerByIndex(alice_addr, uint!(0_U256)).call().await?;
+    let Erc721::tokenOfOwnerByIndexReturn { tokenId } = contract
+        .tokenOfOwnerByIndex(alice_addr, uint!(0_U256))
+        .call()
+        .await?;
     assert_eq!(token_0, tokenId);
 
-    let Erc721::tokenOfOwnerByIndexReturn { tokenId } =
-        contract.tokenOfOwnerByIndex(alice_addr, uint!(1_U256)).call().await?;
+    let Erc721::tokenOfOwnerByIndexReturn { tokenId } = contract
+        .tokenOfOwnerByIndex(alice_addr, uint!(1_U256))
+        .call()
+        .await?;
     assert_eq!(token_1, tokenId);
 
     Ok(())
@@ -1910,10 +1405,10 @@ async fn token_of_owner_by_index_after_transfer_to_another_account(
     let bob_addr = bob.address();
 
     let token_0 = random_token_id();
-    watch!(contract.mint(alice_addr, token_0))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_1 = random_token_id();
-    watch!(contract.mint(alice_addr, token_1))?;
+    watch!(contract.mint(alice_addr))?;
 
     watch!(contract.transferFrom(alice_addr, bob_addr, token_1))?;
     watch!(contract.transferFrom(alice_addr, bob_addr, token_0))?;
@@ -1947,8 +1442,7 @@ async fn token_of_owner_by_index_after_transfer_to_another_account(
         index
     }));
 
-    let Erc721::totalSupplyReturn { totalSupply } =
-        contract.totalSupply().call().await?;
+    let Erc721::totalSupplyReturn { totalSupply } = contract.totalSupply().call().await?;
 
     assert_eq!(uint!(2_U256), totalSupply);
 
@@ -1979,16 +1473,14 @@ async fn error_when_checking_token_by_index_account_has_no_tokens(
 }
 
 #[e2e::test]
-async fn error_when_checking_token_by_index_out_of_bound(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn error_when_checking_token_by_index_out_of_bound(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let alice_addr = alice.address();
 
-    watch!(contract.mint(alice_addr, random_token_id()))?;
-    watch!(contract.mint(alice_addr, random_token_id()))?;
+    watch!(contract.mint(alice_addr))?;
+    watch!(contract.mint(alice_addr))?;
 
     let index_out_of_bound = uint!(2_U256);
 
@@ -2014,10 +1506,10 @@ async fn token_by_index_works(alice: Account) -> eyre::Result<()> {
     let alice_addr = alice.address();
 
     let token_0 = random_token_id();
-    watch!(contract.mint(alice_addr, token_0))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_1 = random_token_id();
-    watch!(contract.mint(alice_addr, token_1))?;
+    watch!(contract.mint(alice_addr))?;
 
     let Erc721::tokenByIndexReturn { tokenId } =
         contract.tokenByIndex(uint!(0_U256)).call().await?;
@@ -2038,12 +1530,12 @@ async fn token_by_index_after_burn(alice: Account) -> eyre::Result<()> {
     let alice_addr = alice.address();
 
     let token_0 = random_token_id();
-    watch!(contract.mint(alice_addr, token_0))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_1 = random_token_id();
-    watch!(contract.mint(alice_addr, token_1))?;
+    watch!(contract.mint(alice_addr))?;
 
-    watch!(contract.burn(token_1))?;
+    // Note: burn function removed from contract
 
     let Erc721::tokenByIndexReturn { tokenId } =
         contract.tokenByIndex(uint!(0_U256)).call().await?;
@@ -2061,8 +1553,7 @@ async fn token_by_index_after_burn(alice: Account) -> eyre::Result<()> {
         index: index_of_burnt_token
     }));
 
-    let Erc721::totalSupplyReturn { totalSupply } =
-        contract.totalSupply().call().await?;
+    let Erc721::totalSupplyReturn { totalSupply } = contract.totalSupply().call().await?;
 
     assert_eq!(uint!(1_U256), totalSupply);
 
@@ -2070,27 +1561,25 @@ async fn token_by_index_after_burn(alice: Account) -> eyre::Result<()> {
 }
 
 #[e2e::test]
-async fn token_by_index_after_burn_and_some_mints(
-    alice: Account,
-) -> eyre::Result<()> {
+async fn token_by_index_after_burn_and_some_mints(alice: Account) -> eyre::Result<()> {
     let contract_addr = alice.as_deployer().deploy().await?.contract_address;
     let contract = Erc721::new(contract_addr, &alice.wallet);
 
     let alice_addr = alice.address();
 
     let token_0 = random_token_id();
-    watch!(contract.mint(alice_addr, token_0))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_1 = random_token_id();
-    watch!(contract.mint(alice_addr, token_1))?;
+    watch!(contract.mint(alice_addr))?;
 
-    watch!(contract.burn(token_1))?;
+    // Note: burn function removed from contract
 
     let token_2 = random_token_id();
-    watch!(contract.mint(alice_addr, token_2))?;
+    watch!(contract.mint(alice_addr))?;
 
     let token_3 = random_token_id();
-    watch!(contract.mint(alice_addr, token_3))?;
+    watch!(contract.mint(alice_addr))?;
 
     let Erc721::tokenByIndexReturn { tokenId } =
         contract.tokenByIndex(uint!(0_U256)).call().await?;
@@ -2118,21 +1607,30 @@ async fn supports_interface(alice: Account) -> eyre::Result<()> {
     let invalid_interface_id: u32 = 0x_ffffffff;
     let Erc721::supportsInterfaceReturn {
         supportsInterface: supports_interface,
-    } = contract.supportsInterface(invalid_interface_id.into()).call().await?;
+    } = contract
+        .supportsInterface(invalid_interface_id.into())
+        .call()
+        .await?;
 
     assert!(!supports_interface);
 
     let erc721_interface_id: u32 = 0x80ac58cd;
     let Erc721::supportsInterfaceReturn {
         supportsInterface: supports_interface,
-    } = contract.supportsInterface(erc721_interface_id.into()).call().await?;
+    } = contract
+        .supportsInterface(erc721_interface_id.into())
+        .call()
+        .await?;
 
     assert!(supports_interface);
 
     let erc165_interface_id: u32 = 0x01ffc9a7;
     let Erc721::supportsInterfaceReturn {
         supportsInterface: supports_interface,
-    } = contract.supportsInterface(erc165_interface_id.into()).call().await?;
+    } = contract
+        .supportsInterface(erc165_interface_id.into())
+        .call()
+        .await?;
 
     assert!(supports_interface);
 
