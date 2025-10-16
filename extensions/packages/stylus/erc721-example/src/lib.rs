@@ -54,6 +54,7 @@ impl Erc721MetadataExample {
         }
     }
 
+    #[selector(name = "totalSupply")]
     fn total_supply(&self) -> U256 {
         self.enumerable.total_supply()
     }
@@ -72,7 +73,26 @@ impl Erc721MetadataExample {
         to: Address,
         token_id: U256,
     ) -> Result<(), erc721::Error> {
-        self.erc721.safe_transfer_from(from, to, token_id)
+        // Get the current owner before transfer
+        let previous_owner = self.erc721.owner_of(token_id)?;
+
+        // Perform the transfer
+        self.erc721.safe_transfer_from(from, to, token_id)?;
+
+        // Update enumerations only if owner actually changed
+        if previous_owner != to {
+            // Remove from previous owner's enumeration
+            let _ = self.enumerable._remove_token_from_owner_enumeration(
+                previous_owner,
+                token_id,
+                &self.erc721,
+            );
+            // Add to new owner's enumeration
+            let _ = self
+                .enumerable
+                ._add_token_to_owner_enumeration(to, token_id, &self.erc721);
+        }
+        Ok(())
     }
 
     fn safe_transfer_from_with_data(
@@ -82,8 +102,27 @@ impl Erc721MetadataExample {
         token_id: U256,
         data: Bytes,
     ) -> Result<(), erc721::Error> {
+        // Get the current owner before transfer
+        let previous_owner = self.erc721.owner_of(token_id)?;
+
+        // Perform the transfer
         self.erc721
-            .safe_transfer_from_with_data(from, to, token_id, data)
+            .safe_transfer_from_with_data(from, to, token_id, data)?;
+
+        // Update enumerations only if owner actually changed
+        if previous_owner != to {
+            // Remove from previous owner's enumeration
+            let _ = self.enumerable._remove_token_from_owner_enumeration(
+                previous_owner,
+                token_id,
+                &self.erc721,
+            );
+            // Add to new owner's enumeration
+            let _ = self
+                .enumerable
+                ._add_token_to_owner_enumeration(to, token_id, &self.erc721);
+        }
+        Ok(())
     }
 
     fn transfer_from(
@@ -92,7 +131,26 @@ impl Erc721MetadataExample {
         to: Address,
         token_id: U256,
     ) -> Result<(), erc721::Error> {
-        self.erc721.transfer_from(from, to, token_id)
+        // Get the current owner before transfer
+        let previous_owner = self.erc721.owner_of(token_id)?;
+
+        // Perform the transfer
+        self.erc721.transfer_from(from, to, token_id)?;
+
+        // Update enumerations only if owner actually changed
+        if previous_owner != to {
+            // Remove from previous owner's enumeration
+            let _ = self.enumerable._remove_token_from_owner_enumeration(
+                previous_owner,
+                token_id,
+                &self.erc721,
+            );
+            // Add to new owner's enumeration
+            let _ = self
+                .enumerable
+                ._add_token_to_owner_enumeration(to, token_id, &self.erc721);
+        }
+        Ok(())
     }
 
     fn approve(&mut self, to: Address, token_id: U256) -> Result<(), erc721::Error> {
@@ -133,6 +191,7 @@ impl Erc721MetadataExample {
         Ok(self.metadata.base_uri() + cid)
     }
 
+    #[selector(name = "tokenOfOwnerByIndex")]
     fn token_of_owner_by_index(
         &self,
         owner: Address,
@@ -141,6 +200,7 @@ impl Erc721MetadataExample {
         Ok(self.enumerable.token_of_owner_by_index(owner, index)?)
     }
 
+    #[selector(name = "tokenByIndex")]
     fn token_by_index(&self, index: U256) -> Result<U256, enumerable::Error> {
         Ok(self.enumerable.token_by_index(index)?)
     }
@@ -184,18 +244,7 @@ impl IErc721 for Erc721MetadataExample {
         to: Address,
         token_id: U256,
     ) -> Result<(), Self::Error> {
-        let previous_owner = self.erc721.owner_of(token_id)?;
-        self.erc721.transfer_from(from, to, token_id)?;
-        // update enumerations
-        let _ = self.enumerable._remove_token_from_owner_enumeration(
-            previous_owner,
-            token_id,
-            &self.erc721,
-        );
-        let _ = self
-            .enumerable
-            ._add_token_to_owner_enumeration(to, token_id, &self.erc721);
-        Ok(())
+        self.erc721.transfer_from(from, to, token_id)
     }
 
     fn approve(&mut self, to: Address, token_id: U256) -> Result<(), Self::Error> {
