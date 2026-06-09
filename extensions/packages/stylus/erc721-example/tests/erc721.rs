@@ -3,10 +3,8 @@
 // The problem is that openzeppelin-stylus version 0.3.0 is using an older API of stylus-sdk where VM was a struct with a host field, but in stylus-sdk 0.9.0, VM is now a tuple struct
 
 use abi::Erc721;
-use alloy::{
-    primitives::{fixed_bytes, uint, Address, Bytes, U256},
-    sol_types::SolError,
-};
+use alloy_primitives::{fixed_bytes, uint, Address, Bytes, U256};
+use alloy_sol_types::SolError;
 use e2e::{receipt, send, watch, Account, EventExt, PanicCode, Revert};
 use mock::{receiver, receiver::ERC721ReceiverMock};
 
